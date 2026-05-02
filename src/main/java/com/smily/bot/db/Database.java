@@ -673,6 +673,27 @@ public class Database {
         }
     }
 
+    public int resetDailyLimitsForAllUsers() {
+        String sql = "UPDATE users SET last_food_play_date = NULL, last_pipisa_play_date = NULL, updated_at = ?";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, now());
+            return ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public boolean resetDailyLimitsForUser(long telegramId) {
+        String sql = "UPDATE users SET last_food_play_date = NULL, last_pipisa_play_date = NULL, updated_at = ? WHERE telegram_id = ?";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, now());
+            ps.setLong(2, telegramId);
+            return ps.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private UserProfile mapUser(ResultSet rs) throws SQLException {
         return new UserProfile(
                 rs.getLong("id"),

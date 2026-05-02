@@ -11,9 +11,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
+import java.util.regex.Pattern;
 
 public class GameService {
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+    private static final Pattern URL_LIKE = Pattern.compile("(https?://|www\\.|t\\.me/|telegram\\.me|\\.[a-z]{2,})", Pattern.CASE_INSENSITIVE);
     private final Database db;
     private final Random random = new Random();
 
@@ -78,14 +80,14 @@ public class GameService {
 
     public String buildFoodScreen(UserProfile user) {
         return "🍔 Еда-метр\n\n" +
-                FormatUtil.safeName(user.firstName(), user.username()) +
+                displayName(user.firstName(), user.username()) +
                 ", за прошлый заход: " + FormatUtil.kg(user.foodLastDelta()) + " кг.\n" +
                 "Всего накоплено: " + FormatUtil.kg(user.foodTotal()) + " кг еды.";
     }
 
     public String buildPipisaScreen(UserProfile user) {
         return "📏 Писька-метр\n\n" +
-                FormatUtil.safeName(user.firstName(), user.username()) +
+                displayName(user.firstName(), user.username()) +
                 ", текущий показатель: " + user.pipisaTotal() + " см.\n" +
                 "Последний прирост: " + signed(user.pipisaLastDelta()) + " см.";
     }
@@ -102,7 +104,7 @@ public class GameService {
             sb.append("\n");
             for (LeaderboardEntry e : top) {
                 sb.append(e.rank()).append(". ")
-                        .append(FormatUtil.safeName(e.firstName(), e.username()))
+                        .append(displayName(e.firstName(), e.username()))
                         .append(" — ").append(FormatUtil.kg(e.value())).append(" кг\n");
             }
         }
@@ -126,7 +128,7 @@ public class GameService {
             sb.append("\n");
             for (LeaderboardEntry e : top) {
                 sb.append(e.rank()).append(". ")
-                        .append(FormatUtil.safeName(e.firstName(), e.username()))
+                        .append(displayName(e.firstName(), e.username()))
                         .append(" — ").append((int) e.value()).append(" см\n");
             }
         }
@@ -168,6 +170,14 @@ public class GameService {
 
     public boolean removeKeyword(long id) {
         return db.removeKeyword(id);
+    }
+
+    public int resetDailyLimitsForAllUsers() {
+        return db.resetDailyLimitsForAllUsers();
+    }
+
+    public boolean resetDailyLimitsForUser(long telegramId) {
+        return db.resetDailyLimitsForUser(telegramId);
     }
 
     public String renderChallengeList(long telegramId) {
@@ -255,5 +265,27 @@ public class GameService {
             case MONTH -> "за месяц";
             case ALL -> "за всё время";
         };
+    }
+
+    public String displayName(String firstName, String username) {
+        if (shouldMaskName(firstName, username)) {
+            return "НикСкрыт";
+        }
+        return FormatUtil.safeName(firstName, username);
+    }
+
+    private boolean shouldMaskName(String firstName, String username) {
+        String name = (firstName == null ? "" : firstName) + " " + (username == null ? "" : username);
+        String low = name.toLowerCase();
+        if (URL_LIKE.matcher(low).find()) {
+            return true;
+        }
+        for (KeywordLink link : db.listKeywords()) {
+            String key = link.keyword() == null ? "" : link.keyword().trim().toLowerCase();
+            if (!key.isBlank() && low.contains(key)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

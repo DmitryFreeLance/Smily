@@ -60,7 +60,8 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         } catch (Exception e) {
             long chatId = resolveChatId(update);
             if (chatId != 0) {
-                send(chatId, "⚠️ Что-то пошло не так. Попробуй ещё раз через пару секунд.", mainMenu(chatId));
+                long userId = resolveUserId(update);
+                send(chatId, "⚠️ Что-то пошло не так. Попробуй ещё раз через пару секунд.", mainMenu(userId));
             }
         }
     }
@@ -88,7 +89,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         }
 
         if ("/start".equalsIgnoreCase(text)) {
-            String welcome = "Привет, " + FormatUtil.safeName(profile.firstName(), profile.username()) + "! 👋\n" +
+            String welcome = "Привет, " + gameService.displayName(profile.firstName(), profile.username()) + "! 👋\n" +
                     "Добро пожаловать в мини-игру. Выбирай режим и прокачивайся каждый день.";
             send(chatId, welcome, mainMenu(telegramId));
             return;
@@ -109,24 +110,9 @@ public class GameTelegramBot extends TelegramLongPollingBot {
             return;
         }
 
-        if (trySendKeywordLink(chatId, text)) {
-            return;
-        }
-
         send(chatId,
                 "Я понимаю команды `/start`, `/eat`, `/поесть`, `/menu` и кнопки меню ниже.",
                 mainMenu(telegramId));
-    }
-
-    private boolean trySendKeywordLink(long chatId, String messageText) {
-        String low = messageText.toLowerCase();
-        for (KeywordLink link : gameService.listKeywords()) {
-            if (low.contains(link.keyword())) {
-                send(chatId, "🔗 Нашёл совпадение: " + link.keyword() + "\n" + link.url(), menuBackOnly());
-                return true;
-            }
-        }
-        return false;
     }
 
     private void handleCallback(CallbackQuery callback) throws TelegramApiException {
@@ -209,11 +195,6 @@ public class GameTelegramBot extends TelegramLongPollingBot {
             edit(chatId, messageId, text + "\n\n" + gameService.renderChallengeList(telegramId), challengesMenu(telegramId));
             return;
         }
-        if (CallbackData.LINKS.equals(data)) {
-            edit(chatId, messageId, gameService.renderKeywordList(), linksMenu(telegramId));
-            return;
-        }
-
         if (CallbackData.ADMIN_MENU.equals(data) && isAdmin(telegramId)) {
             edit(chatId, messageId, adminMenuText(), adminMenu());
             return;
@@ -252,6 +233,25 @@ public class GameTelegramBot extends TelegramLongPollingBot {
                     adminCountersMenu());
             return;
         }
+        if (CallbackData.ADMIN_LIMITS.equals(data) && isAdmin(telegramId)) {
+            edit(chatId, messageId,
+                    "🗓 Дневные лимиты\n\n" +
+                            "Можно обнулить дневные ограничения, чтобы игрок(и) могли сыграть ещё раз сегодня.",
+                    adminLimitsMenu());
+            return;
+        }
+        if (CallbackData.ADMIN_LIMITS_RESET_ALL.equals(data) && isAdmin(telegramId)) {
+            int affected = gameService.resetDailyLimitsForAllUsers();
+            edit(chatId, messageId, "✅ Лимиты сброшены для " + affected + " игрок(ов).", adminLimitsMenu());
+            return;
+        }
+        if (CallbackData.ADMIN_LIMITS_RESET_USER_PROMPT.equals(data) && isAdmin(telegramId)) {
+            pendingActions.put(telegramId, AdminPendingAction.RESET_LIMITS_USER);
+            edit(chatId, messageId,
+                    "✍️ Пришли `telegram_id` игрока, для которого нужно обнулить дневные лимиты.",
+                    adminLimitsMenu());
+            return;
+        }
         if (CallbackData.ADMIN_COUNTER_SET_PROMPT.equals(data) && isAdmin(telegramId)) {
             pendingActions.put(telegramId, AdminPendingAction.SET_COUNTERS);
             edit(chatId, messageId,
@@ -277,19 +277,15 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         try {
             if (action == AdminPendingAction.ADD_KEYWORD) {
                 String[] parts = text.split("\\|", 2);
-                if (parts.length < 2) {
-                    send(admin.chatId(), "Нужен формат: `ключевое_слово | https://ссылка`", adminKeywordsMenu());
-                    return;
-                }
                 String keyword = parts[0].trim().toLowerCase();
-                String url = parts[1].trim();
-                if (keyword.isBlank() || url.isBlank() || !url.startsWith("http")) {
-                    send(admin.chatId(), "Проверь данные: ключ не пустой, ссылка должна начинаться с http/https.", adminKeywordsMenu());
+                String url = parts.length > 1 ? parts[1].trim() : "правило";
+                if (keyword.isBlank()) {
+                    send(admin.chatId(), "Проверь данные: паттерн не должен быть пустым.", adminKeywordsMenu());
                     return;
                 }
                 gameService.addKeyword(keyword, url, admin.telegramId());
                 pendingActions.remove(admin.telegramId());
-                send(admin.chatId(), "✅ Ссылка добавлена/обновлена.\n\n" + adminKeywordsText(), adminKeywordsMenu());
+                send(admin.chatId(), "✅ Правило фильтра добавлено/обновлено.\n\n" + adminKeywordsText(), adminKeywordsMenu());
                 return;
             }
 
@@ -315,6 +311,13 @@ public class GameTelegramBot extends TelegramLongPollingBot {
                             adminCountersMenu());
                 }
                 pendingActions.remove(admin.telegramId());
+            }
+            if (action == AdminPendingAction.RESET_LIMITS_USER) {
+                long targetTelegramId = Long.parseLong(text.trim());
+                boolean ok = gameService.resetDailyLimitsForUser(targetTelegramId);
+                pendingActions.remove(admin.telegramId());
+                send(admin.chatId(), ok ? "✅ Лимиты игрока сброшены." : "Пользователь не найден.", adminLimitsMenu());
+                return;
             }
         } catch (Exception e) {
             send(admin.chatId(), "Ошибка формата. Проверь сообщение и попробуй снова.", adminMenu());
@@ -370,18 +373,17 @@ public class GameTelegramBot extends TelegramLongPollingBot {
     private String adminKeywordsText() {
         List<KeywordLink> links = gameService.listKeywords();
         if (links.isEmpty()) {
-            return "🔑 Ключевые слова\n\nСписок пуст. Добавь первую связку `ключ -> ссылка`.";
+            return "🔑 Фильтр ников\n\nСписок пуст. Добавь первый паттерн для маскировки ников.";
         }
         String rendered = links.stream()
-                .map(l -> "• " + l.id() + ": " + l.keyword() + " -> " + l.url())
+                .map(l -> "• " + l.id() + ": " + l.keyword() + " (" + l.url() + ")")
                 .collect(Collectors.joining("\n"));
-        return "🔑 Ключевые слова\n\n" + rendered;
+        return "🔑 Фильтр ников\n\nЕсли ник содержит паттерн или ссылку, вместо имени будет `НикСкрыт`.\n\n" + rendered;
     }
 
     private InlineKeyboardMarkup mainMenu(long telegramId) {
         List<List<InlineKeyboardButton>> rows = new ArrayList<>();
         rows.add(List.of(btn("🍔 Еда-метр", CallbackData.MENU_FOOD), btn("📏 Писька-метр", CallbackData.MENU_PIPISA)));
-        rows.add(List.of(btn("🔗 Полезные ссылки", CallbackData.LINKS)));
         if (isAdmin(telegramId)) {
             rows.add(List.of(btn("🛠 Админ-панель", CallbackData.ADMIN_MENU)));
         }
@@ -420,15 +422,6 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         ));
     }
 
-    private InlineKeyboardMarkup linksMenu(long telegramId) {
-        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
-        rows.add(List.of(btn("⬅️ Назад", CallbackData.MENU_MAIN), btn("🏠 В меню", CallbackData.MENU_MAIN)));
-        if (isAdmin(telegramId)) {
-            rows.add(List.of(btn("🛠 Админ-панель", CallbackData.ADMIN_MENU)));
-        }
-        return kb(rows);
-    }
-
     private InlineKeyboardMarkup challengesMenu(long telegramId) {
         List<List<InlineKeyboardButton>> rows = new ArrayList<>();
         for (ChallengeView challenge : gameService.getChallenges(telegramId)) {
@@ -443,7 +436,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
     private InlineKeyboardMarkup adminMenu() {
         return kb(List.of(
                 List.of(btn("📊 Статистика", CallbackData.ADMIN_STATS), btn("🎛 Счётчики", CallbackData.ADMIN_COUNTERS)),
-                List.of(btn("🔑 Ключевые слова", CallbackData.ADMIN_KEYWORDS)),
+                List.of(btn("🔑 Фильтр ников", CallbackData.ADMIN_KEYWORDS), btn("🗓 Лимиты", CallbackData.ADMIN_LIMITS)),
                 List.of(btn("⬅️ Назад", CallbackData.MENU_MAIN), btn("🏠 В меню", CallbackData.MENU_MAIN))
         ));
     }
@@ -472,9 +465,11 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         ));
     }
 
-    private InlineKeyboardMarkup menuBackOnly() {
+    private InlineKeyboardMarkup adminLimitsMenu() {
         return kb(List.of(
-                List.of(btn("🏠 В меню", CallbackData.MENU_MAIN))
+                List.of(btn("♻️ Сбросить всем", CallbackData.ADMIN_LIMITS_RESET_ALL)),
+                List.of(btn("👤 Сбросить игроку", CallbackData.ADMIN_LIMITS_RESET_USER_PROMPT)),
+                List.of(btn("⬅️ Назад", CallbackData.ADMIN_MENU), btn("🏠 В меню", CallbackData.MENU_MAIN))
         ));
     }
 
@@ -536,9 +531,20 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         return 0;
     }
 
+    private long resolveUserId(Update update) {
+        if (update.hasMessage() && update.getMessage().getFrom() != null) {
+            return update.getMessage().getFrom().getId();
+        }
+        if (update.hasCallbackQuery() && update.getCallbackQuery().getFrom() != null) {
+            return update.getCallbackQuery().getFrom().getId();
+        }
+        return 0;
+    }
+
     private enum AdminPendingAction {
         ADD_KEYWORD,
         SET_COUNTERS,
-        ADD_COUNTERS
+        ADD_COUNTERS,
+        RESET_LIMITS_USER
     }
 }
