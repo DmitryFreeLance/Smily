@@ -21,8 +21,11 @@ public class BotConfig {
     public static BotConfig fromEnv() {
         String token = readRequired("BOT_TOKEN");
         String username = readRequired("BOT_USERNAME");
-        String dbPath = readOptional("DB_PATH", "./bot.db");
-        String adminRaw = readOptional("ADMIN_IDS", "");
+        String dbPath = readDbPath();
+        String adminRaw = mergeAdminIds(
+                readOptional("ADMIN_IDS", ""),
+                readOptional("BOT_OWNER_ID", "")
+        );
         Set<Long> adminIds = Arrays.stream(adminRaw.split(","))
                 .map(String::trim)
                 .filter(v -> !v.isEmpty())
@@ -42,6 +45,24 @@ public class BotConfig {
     private static String readOptional(String key, String fallback) {
         String value = System.getenv(key);
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private static String readDbPath() {
+        String oldStyle = readOptional("BOT_DB_PATH", "");
+        if (!oldStyle.isBlank()) {
+            return oldStyle;
+        }
+        return readOptional("DB_PATH", "./bot.db");
+    }
+
+    private static String mergeAdminIds(String adminIds, String ownerId) {
+        if (adminIds.isBlank()) {
+            return ownerId;
+        }
+        if (ownerId.isBlank()) {
+            return adminIds;
+        }
+        return adminIds + "," + ownerId;
     }
 
     public String token() {

@@ -9,7 +9,9 @@ FROM eclipse-temurin:17-jre
 WORKDIR /app
 ENV BOT_TOKEN="" \
     BOT_USERNAME="" \
+    BOT_OWNER_ID="" \
     ADMIN_IDS="" \
+    BOT_DB_PATH="/data/bot.db" \
     DB_PATH="/data/bot.db" \
     TZ="Europe/Moscow"
 RUN mkdir -p /data

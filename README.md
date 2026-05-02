@@ -24,15 +24,18 @@
 ## Переменные окружения
 - `BOT_TOKEN` (обязательно)
 - `BOT_USERNAME` (обязательно)
+- `BOT_OWNER_ID` (опционально, один Telegram ID админа)
 - `ADMIN_IDS` (опционально, список Telegram ID через запятую)
+- `BOT_DB_PATH` (опционально, путь к БД; приоритетнее `DB_PATH`)
 - `DB_PATH` (опционально, по умолчанию `./bot.db`)
 
 Пример:
 ```bash
 export BOT_TOKEN="123456:ABC..."
 export BOT_USERNAME="my_game_meter_bot"
+export BOT_OWNER_ID="111111111"
 export ADMIN_IDS="111111111,222222222"
-export DB_PATH="./bot.db"
+export BOT_DB_PATH="./bot.db"
 ```
 
 ## Локальный запуск
@@ -44,19 +47,27 @@ java -jar target/game-telegram-bot-1.0.0.jar
 ## Docker
 Сборка:
 ```bash
-docker build -t game-telegram-bot .
+docker build -t game-meter-bot .
 ```
 
 Запуск:
 ```bash
+sudo mkdir -p "$(pwd)/data"
+
+docker rm -f game-meter-bot 2>/dev/null || true
 docker run -d \
-  --name game-telegram-bot \
+  --name game-meter-bot \
+  --restart unless-stopped \
+  --network host \
+  --add-host api.telegram.org:149.154.167.220 \
   -e BOT_TOKEN="123456:ABC..." \
   -e BOT_USERNAME="my_game_meter_bot" \
+  -e BOT_OWNER_ID="111111111" \
   -e ADMIN_IDS="111111111,222222222" \
-  -e DB_PATH="/data/bot.db" \
+  -e BOT_DB_PATH="/data/bot.db" \
+  -e JAVA_TOOL_OPTIONS="-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv6Addresses=false" \
   -v $(pwd)/data:/data \
-  game-telegram-bot
+  game-meter-bot
 ```
 
 ## Команды
