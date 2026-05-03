@@ -57,9 +57,6 @@ public class GameTelegramBot extends TelegramLongPollingBot {
     public void onUpdateReceived(Update update) {
         try {
             if (update.hasCallbackQuery()) {
-                if (!isPrivateChat(update.getCallbackQuery().getMessage())) {
-                    return;
-                }
                 handleCallback(update.getCallbackQuery());
                 return;
             }
@@ -164,9 +161,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         );
 
         switch (command) {
-            case "start" -> send(chatId,
-                    "✅ Бот активен.\nКоманды: /burger@" + username + ", /dick@" + username,
-                    null);
+            case "start" -> send(chatId, mainMenuText(), mainMenu(telegramId));
             case "burger", "eat", "поесть" -> {
                 FoodActionResult result = gameService.playFood(profile.telegramId());
                 send(chatId, renderFoodActionText(result), null);
@@ -182,10 +177,10 @@ public class GameTelegramBot extends TelegramLongPollingBot {
     }
 
     private void moderateMessageIfNeeded(Message message) {
-        if (message == null || message.getFrom() == null) {
+        if (message == null) {
             return;
         }
-        if (Boolean.TRUE.equals(message.getFrom().getIsBot())) {
+        if (message.getFrom() != null && Boolean.TRUE.equals(message.getFrom().getIsBot())) {
             return;
         }
         if (containsBlockedLinkOrDomain(message)) {
