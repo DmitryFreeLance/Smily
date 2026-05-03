@@ -2,6 +2,7 @@ package com.smily.bot.bot;
 
 import com.smily.bot.model.ChallengeView;
 import com.smily.bot.model.FoodActionResult;
+import com.smily.bot.model.AdminUsersPage;
 import com.smily.bot.model.KeywordLink;
 import com.smily.bot.model.LeaderboardPeriod;
 import com.smily.bot.model.PipisaActionResult;
@@ -207,6 +208,17 @@ public class GameTelegramBot extends TelegramLongPollingBot {
                     adminBack());
             return;
         }
+        if (CallbackData.ADMIN_USERS.equals(data) && isAdmin(telegramId)) {
+            AdminUsersPage page = gameService.renderAdminUsersPage(0, 10);
+            edit(chatId, messageId, page.text(), adminUsersMenu(page.page(), page.totalPages()));
+            return;
+        }
+        if (data.startsWith(CallbackData.ADMIN_USERS_PAGE_PREFIX) && isAdmin(telegramId)) {
+            int requestedPage = Integer.parseInt(data.substring(CallbackData.ADMIN_USERS_PAGE_PREFIX.length()));
+            AdminUsersPage page = gameService.renderAdminUsersPage(requestedPage, 10);
+            edit(chatId, messageId, page.text(), adminUsersMenu(page.page(), page.totalPages()));
+            return;
+        }
         if (CallbackData.ADMIN_KEYWORDS.equals(data) && isAdmin(telegramId)) {
             edit(chatId, messageId, adminKeywordsText(), adminKeywordsMenu());
             return;
@@ -214,7 +226,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         if (CallbackData.ADMIN_KEYWORD_ADD_PROMPT.equals(data) && isAdmin(telegramId)) {
             pendingActions.put(telegramId, AdminPendingAction.ADD_KEYWORD);
             edit(chatId, messageId,
-                    "✍️ Пришли данные в формате:\n`ключевое_слово | https://ссылка`\n\nПример: `youtube | https://youtube.com`",
+                    "✍️ Пришли паттерн в формате:\n`паттерн | комментарий`\n\nПример: `youtube | реклама`",
                     adminKeywordsMenu());
             return;
         }
@@ -367,7 +379,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
     }
 
     private String adminMenuText() {
-        return "🛠 Админ-панель\n\nЗдесь можно управлять счётчиками, ключевыми ссылками и смотреть статистику.";
+        return "🛠 Админ-панель\n\nЗдесь можно управлять счётчиками, фильтром ников, лимитами и смотреть список игроков.";
     }
 
     private String adminKeywordsText() {
@@ -436,6 +448,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
     private InlineKeyboardMarkup adminMenu() {
         return kb(List.of(
                 List.of(btn("📊 Статистика", CallbackData.ADMIN_STATS), btn("🎛 Счётчики", CallbackData.ADMIN_COUNTERS)),
+                List.of(btn("👥 Пользователи", CallbackData.ADMIN_USERS)),
                 List.of(btn("🔑 Фильтр ников", CallbackData.ADMIN_KEYWORDS), btn("🗓 Лимиты", CallbackData.ADMIN_LIMITS)),
                 List.of(btn("⬅️ Назад", CallbackData.MENU_MAIN), btn("🏠 В меню", CallbackData.MENU_MAIN))
         ));
@@ -471,6 +484,23 @@ public class GameTelegramBot extends TelegramLongPollingBot {
                 List.of(btn("👤 Сбросить игроку", CallbackData.ADMIN_LIMITS_RESET_USER_PROMPT)),
                 List.of(btn("⬅️ Назад", CallbackData.ADMIN_MENU), btn("🏠 В меню", CallbackData.MENU_MAIN))
         ));
+    }
+
+    private InlineKeyboardMarkup adminUsersMenu(int page, int totalPages) {
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        if (totalPages > 1) {
+            List<InlineKeyboardButton> nav = new ArrayList<>();
+            if (page > 0) {
+                nav.add(btn("⬅️", CallbackData.ADMIN_USERS_PAGE_PREFIX + (page - 1)));
+            }
+            nav.add(btn((page + 1) + "/" + totalPages, CallbackData.ADMIN_USERS_PAGE_PREFIX + page));
+            if (page < totalPages - 1) {
+                nav.add(btn("➡️", CallbackData.ADMIN_USERS_PAGE_PREFIX + (page + 1)));
+            }
+            rows.add(nav);
+        }
+        rows.add(List.of(btn("⬅️ Назад", CallbackData.ADMIN_MENU), btn("🏠 В меню", CallbackData.MENU_MAIN)));
+        return kb(rows);
     }
 
     private InlineKeyboardButton btn(String text, String callback) {

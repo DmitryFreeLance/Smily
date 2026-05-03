@@ -152,6 +152,39 @@ public class GameService {
         return db.usersCount();
     }
 
+    public AdminUsersPage renderAdminUsersPage(int requestedPage, int pageSize) {
+        int totalUsers = db.usersCount();
+        int totalPages = Math.max(1, (int) Math.ceil(totalUsers / (double) pageSize));
+        int page = Math.min(Math.max(requestedPage, 0), totalPages - 1);
+        int offset = page * pageSize;
+
+        List<AdminUserEntry> users = db.listUsersPage(pageSize, offset);
+        StringBuilder sb = new StringBuilder();
+        sb.append("👥 Пользователи\n\n")
+                .append("Страница ").append(page + 1).append("/").append(totalPages)
+                .append(" • Всего: ").append(totalUsers).append("\n\n");
+
+        if (users.isEmpty()) {
+            sb.append("Список пока пуст.");
+        } else {
+            int idx = offset + 1;
+            for (AdminUserEntry u : users) {
+                String name = (u.firstName() == null || u.firstName().isBlank()) ? "Без имени" : u.firstName();
+                String tag = (u.username() == null || u.username().isBlank()) ? "-" : "@" + u.username();
+                sb.append(idx++)
+                        .append(". ")
+                        .append(name)
+                        .append(" | ")
+                        .append(tag)
+                        .append(" | id: ")
+                        .append(u.telegramId())
+                        .append("\n");
+            }
+        }
+
+        return new AdminUsersPage(page, totalPages, totalUsers, sb.toString());
+    }
+
     public UserProfile adjustCounters(long telegramId, Double foodDelta, Integer pipisaDelta) {
         return db.adjustCounters(telegramId, foodDelta, pipisaDelta);
     }

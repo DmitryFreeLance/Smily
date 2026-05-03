@@ -18,6 +18,8 @@ public final class CallbackData {
 
     public static final String ADMIN_MENU = "admin:menu";
     public static final String ADMIN_STATS = "admin:stats";
+    public static final String ADMIN_USERS = "admin:users";
+    public static final String ADMIN_USERS_PAGE_PREFIX = "admin:users:page:";
     public static final String ADMIN_KEYWORDS = "admin:keywords";
     public static final String ADMIN_KEYWORD_ADD_PROMPT = "admin:keyword:add";
     public static final String ADMIN_COUNTERS = "admin:counters";

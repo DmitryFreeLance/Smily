@@ -1,6 +1,7 @@
 package com.smily.bot.db;
 
 import com.smily.bot.model.ChallengeView;
+import com.smily.bot.model.AdminUserEntry;
 import com.smily.bot.model.KeywordLink;
 import com.smily.bot.model.LeaderboardEntry;
 import com.smily.bot.model.LeaderboardPeriod;
@@ -225,6 +226,27 @@ public class Database {
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public List<AdminUserEntry> listUsersPage(int limit, int offset) {
+        List<AdminUserEntry> users = new ArrayList<>();
+        String sql = "SELECT telegram_id, first_name, username FROM users ORDER BY id ASC LIMIT ? OFFSET ?";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, limit);
+            ps.setInt(2, Math.max(offset, 0));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    users.add(new AdminUserEntry(
+                            rs.getLong("telegram_id"),
+                            rs.getString("first_name"),
+                            rs.getString("username")
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+        return users;
     }
 
     public double getActiveMultiplier(long userId) {
