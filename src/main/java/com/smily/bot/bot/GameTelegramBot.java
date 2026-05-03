@@ -12,9 +12,12 @@ import com.smily.bot.util.FormatUtil;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Message;
+import org.telegram.telegrambots.meta.api.objects.MessageEntity;
+import org.telegram.telegrambots.meta.api.objects.MaybeInaccessibleMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.User;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
@@ -23,8 +26,10 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.regex.Pattern;
 
 public class GameTelegramBot extends TelegramLongPollingBot {
+    private static final Pattern DEFAULT_LINK_PATTERN = Pattern.compile("(?i)(https?://\\S+|www\\.\\S+|t\\.me/\\S+|[a-z0-9-]+(?:\\.[a-z0-9-]+)+\\S*)");
     private final String token;
     private final String username;
     private final Set<Long> adminIds;
@@ -52,15 +57,32 @@ public class GameTelegramBot extends TelegramLongPollingBot {
     public void onUpdateReceived(Update update) {
         try {
             if (update.hasCallbackQuery()) {
+                if (!isPrivateChat(update.getCallbackQuery().getMessage())) {
+                    return;
+                }
                 handleCallback(update.getCallbackQuery());
                 return;
             }
+            if (update.hasEditedMessage()) {
+                Message edited = update.getEditedMessage();
+                if (isGroupChat(edited)) {
+                    moderateMessageIfNeeded(edited);
+                }
+                return;
+            }
             if (update.hasMessage() && update.getMessage().hasText()) {
-                handleMessage(update.getMessage());
+                Message msg = update.getMessage();
+                if (isGroupChat(msg)) {
+                    moderateMessageIfNeeded(msg);
+                    return;
+                }
+                handleMessage(msg);
+            } else if (update.hasMessage() && isGroupChat(update.getMessage())) {
+                moderateMessageIfNeeded(update.getMessage());
             }
         } catch (Exception e) {
             long chatId = resolveChatId(update);
-            if (chatId != 0) {
+            if (chatId != 0 && isPrivateUpdate(update)) {
                 long userId = resolveUserId(update);
                 send(chatId, "⚠️ Что-то пошло не так. Попробуй ещё раз через пару секунд.", mainMenu(userId));
             }
@@ -114,6 +136,65 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         send(chatId,
                 "Я понимаю команды `/start`, `/eat`, `/поесть`, `/menu` и кнопки меню ниже.",
                 mainMenu(telegramId));
+    }
+
+    private void moderateMessageIfNeeded(Message message) {
+        if (message == null || message.getFrom() == null) {
+            return;
+        }
+        if (Boolean.TRUE.equals(message.getFrom().getIsBot())) {
+            return;
+        }
+        if (containsBlockedLinkOrDomain(message)) {
+            deleteMessage(message.getChatId(), message.getMessageId());
+        }
+    }
+
+    private boolean containsBlockedLinkOrDomain(Message message) {
+        if (hasLinkEntities(message.getEntities()) || hasLinkEntities(message.getCaptionEntities())) {
+            return true;
+        }
+        String payload = collectModerationPayload(message);
+        if (payload.isBlank()) {
+            return false;
+        }
+        String low = payload.toLowerCase();
+        if (DEFAULT_LINK_PATTERN.matcher(low).find()) {
+            return true;
+        }
+        for (KeywordLink link : gameService.listKeywords()) {
+            String keyword = link.keyword() == null ? "" : link.keyword().trim().toLowerCase();
+            if (!keyword.isBlank() && low.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasLinkEntities(List<MessageEntity> entities) {
+        if (entities == null || entities.isEmpty()) {
+            return false;
+        }
+        for (MessageEntity e : entities) {
+            if ("url".equalsIgnoreCase(e.getType()) || "text_link".equalsIgnoreCase(e.getType())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String collectModerationPayload(Message message) {
+        StringBuilder sb = new StringBuilder();
+        if (message.hasText() && message.getText() != null) {
+            sb.append(message.getText());
+        }
+        if (message.getCaption() != null) {
+            if (!sb.isEmpty()) {
+                sb.append('\n');
+            }
+            sb.append(message.getCaption());
+        }
+        return sb.toString();
     }
 
     private void handleCallback(CallbackQuery callback) throws TelegramApiException {
@@ -379,18 +460,21 @@ public class GameTelegramBot extends TelegramLongPollingBot {
     }
 
     private String adminMenuText() {
-        return "🛠 Админ-панель\n\nЗдесь можно управлять счётчиками, фильтром ников, лимитами и смотреть список игроков.";
+        return "🛠 Админ-панель\n\nЗдесь можно управлять счётчиками, фильтром доменов/ников, лимитами и списком игроков.";
     }
 
     private String adminKeywordsText() {
         List<KeywordLink> links = gameService.listKeywords();
         if (links.isEmpty()) {
-            return "🔑 Фильтр ников\n\nСписок пуст. Добавь первый паттерн для маскировки ников.";
+            return "🔑 Фильтр доменов/ников\n\nСписок пуст. Добавь первый паттерн.";
         }
         String rendered = links.stream()
                 .map(l -> "• " + l.id() + ": " + l.keyword() + " (" + l.url() + ")")
                 .collect(Collectors.joining("\n"));
-        return "🔑 Фильтр ников\n\nЕсли ник содержит паттерн или ссылку, вместо имени будет `НикСкрыт`.\n\n" + rendered;
+        return "🔑 Фильтр доменов/ников\n\n" +
+                "• В рейтингах и экранах ник маскируется как `НикСкрыт`.\n" +
+                "• В группах, где бот админ, сообщение с паттерном удаляется.\n\n" +
+                rendered;
     }
 
     private InlineKeyboardMarkup mainMenu(long telegramId) {
@@ -449,7 +533,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         return kb(List.of(
                 List.of(btn("📊 Статистика", CallbackData.ADMIN_STATS), btn("🎛 Счётчики", CallbackData.ADMIN_COUNTERS)),
                 List.of(btn("👥 Пользователи", CallbackData.ADMIN_USERS)),
-                List.of(btn("🔑 Фильтр ников", CallbackData.ADMIN_KEYWORDS), btn("🗓 Лимиты", CallbackData.ADMIN_LIMITS)),
+                List.of(btn("🔑 Фильтр доменов/ников", CallbackData.ADMIN_KEYWORDS), btn("🗓 Лимиты", CallbackData.ADMIN_LIMITS)),
                 List.of(btn("⬅️ Назад", CallbackData.MENU_MAIN), btn("🏠 В меню", CallbackData.MENU_MAIN))
         ));
     }
@@ -549,6 +633,51 @@ public class GameTelegramBot extends TelegramLongPollingBot {
 
     private boolean isAdmin(long telegramId) {
         return adminIds.contains(telegramId);
+    }
+
+    private void deleteMessage(long chatId, int messageId) {
+        DeleteMessage req = new DeleteMessage();
+        req.setChatId(String.valueOf(chatId));
+        req.setMessageId(messageId);
+        try {
+            execute(req);
+        } catch (TelegramApiException ignored) {
+        }
+    }
+
+    private boolean isGroupChat(Message message) {
+        if (message == null || message.getChat() == null || message.getChat().getType() == null) {
+            return false;
+        }
+        String type = message.getChat().getType();
+        return "group".equalsIgnoreCase(type) || "supergroup".equalsIgnoreCase(type);
+    }
+
+    private boolean isPrivateChat(Message message) {
+        if (message == null || message.getChat() == null || message.getChat().getType() == null) {
+            return false;
+        }
+        return "private".equalsIgnoreCase(message.getChat().getType());
+    }
+
+    private boolean isPrivateChat(MaybeInaccessibleMessage message) {
+        if (message == null) {
+            return false;
+        }
+        return message.isUserMessage();
+    }
+
+    private boolean isPrivateUpdate(Update update) {
+        if (update.hasMessage()) {
+            return isPrivateChat(update.getMessage());
+        }
+        if (update.hasCallbackQuery() && update.getCallbackQuery().getMessage() != null) {
+            return isPrivateChat(update.getCallbackQuery().getMessage());
+        }
+        if (update.hasEditedMessage()) {
+            return isPrivateChat(update.getEditedMessage());
+        }
+        return false;
     }
 
     private long resolveChatId(Update update) {
