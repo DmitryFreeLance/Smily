@@ -488,7 +488,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         String name = gameService.displayName(user.firstName(), user.username());
         int rank = gameService.getFoodAllTimeRank(user.telegramId());
         if (result.alreadyPlayedToday()) {
-            return name + ", ты уже ел(а) сегодня.\n" +
+            return name + ", ты уже ел сегодня.\n" +
                     "Сейчас у тебя " + FormatUtil.kg(result.total()) + " кг.\n" +
                     "Ты занимаешь " + rank + " место в топе.\n" +
                     "Следующая попытка завтра!";
@@ -521,7 +521,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         String name = gameService.displayName(user.firstName(), user.username());
         int rank = gameService.getPipisaAllTimeRank(user.telegramId());
         if (result.alreadyPlayedToday()) {
-            return name + ", ты уже измерял(а) писюн сегодня.\n" +
+            return name + ", ты уже измерял писюн сегодня.\n" +
                     "Сейчас он равен " + result.total() + " см.\n" +
                     "Ты занимаешь " + rank + " место в топе.\n" +
                     "Следующая попытка завтра!";
