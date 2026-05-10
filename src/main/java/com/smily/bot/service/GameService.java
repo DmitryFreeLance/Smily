@@ -247,33 +247,52 @@ public class GameService {
         if (challenges.isEmpty()) {
             return "🎯 Сейчас нет активных челленджей. Загляни позже.";
         }
+        boolean pipisaMode = "PIPISA".equals(mode);
         List<String> blocks = new ArrayList<>();
         for (ChallengeView c : challenges) {
-            String reward = "BONUS_KG".equals(c.rewardType())
-                    ? "+" + FormatUtil.kg(c.rewardValue()) + " кг"
-                    : "x" + c.rewardValue() + " на " + c.rewardDays() + " дн.";
+            String reward;
+            if ("BONUS_KG".equals(c.rewardType())) {
+                reward = "+" + FormatUtil.kg(c.rewardValue()) + " кг";
+            } else if ("BONUS_CM".equals(c.rewardType())) {
+                reward = "+" + (int) Math.round(c.rewardValue()) + " см";
+            } else {
+                reward = "x" + c.rewardValue() + " на " + c.rewardDays() + " дн.";
+            }
             String status;
             if (!c.accepted()) {
                 status = "Статус: не принят";
             } else if ("ACTIVE".equals(c.status())) {
                 double percent = Math.min((c.progress() / c.goalKg()) * 100.0, 100.0);
                 String until = c.expiresAt() == null ? "-" : shortDate(c.expiresAt());
-                status = "Прогресс: " + FormatUtil.kg(c.progress()) + "/" + FormatUtil.kg(c.goalKg()) +
-                        " кг (" + (int) percent + "%) до " + until;
+                if (pipisaMode) {
+                    status = "Прогресс: " + (int) Math.round(c.progress()) + "/" + (int) Math.round(c.goalKg()) +
+                            " см (" + (int) percent + "%) до " + until;
+                } else {
+                    status = "Прогресс: " + FormatUtil.kg(c.progress()) + "/" + FormatUtil.kg(c.goalKg()) +
+                            " кг (" + (int) percent + "%) до " + until;
+                }
             } else if ("COMPLETED".equals(c.status())) {
                 status = "Статус: выполнен ✅";
             } else {
                 status = "Статус: провален ❌";
             }
 
-            String text = c.title() + "\n" +
-                    c.description() + "\n" +
-                    "Цель: " + FormatUtil.kg(c.goalKg()) + " кг за " + c.durationDays() + " дн.\n" +
-                    "Награда: " + reward + "\n" +
-                    status;
+            String text;
+            if (pipisaMode) {
+                text = c.title() + "\n" +
+                        c.description() + "\n" +
+                        "Награда: " + reward + "\n" +
+                        status;
+            } else {
+                text = c.title() + "\n" +
+                        c.description() + "\n" +
+                        "Цель: " + FormatUtil.kg(c.goalKg()) + " кг за " + c.durationDays() + " дн.\n" +
+                        "Награда: " + reward + "\n" +
+                        status;
+            }
             blocks.add(text);
         }
-        String modeTitle = "PIPISA".equals(mode) ? "🎯 Пошлые челленджи" : "🎯 Активные челленджи";
+        String modeTitle = "🎯 Активные челленджи";
         return modeTitle + "\n\n" + String.join("\n\n", blocks);
     }
 
