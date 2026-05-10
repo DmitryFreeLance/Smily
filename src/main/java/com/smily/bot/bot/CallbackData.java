@@ -12,6 +12,7 @@ public final class CallbackData {
     public static final String FOOD_CHALLENGES = "food:challenges";
     public static final String PIPISA_MEASURE = "pipisa:measure";
     public static final String PIPISA_RATING = "pipisa:rating";
+    public static final String PIPISA_CHALLENGES = "pipisa:challenges";
     public static final String PIPISA_RATING_DAY = "pipisa:rating:day";
     public static final String PIPISA_RATING_MONTH = "pipisa:rating:month";
     public static final String PIPISA_RATING_ALL = "pipisa:rating:all";

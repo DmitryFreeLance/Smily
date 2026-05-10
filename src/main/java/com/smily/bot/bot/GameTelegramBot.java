@@ -127,7 +127,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         }
         if ("/dick".equalsIgnoreCase(text) || "/pipisa".equalsIgnoreCase(text)) {
             PipisaActionResult result = gameService.playPipisa(profile.telegramId());
-            send(chatId, renderPipisaActionText(profile, result), pipisaMenu());
+            sendHtml(chatId, renderPipisaActionText(profile, result), pipisaMenu());
             return;
         }
 
@@ -164,11 +164,11 @@ public class GameTelegramBot extends TelegramLongPollingBot {
             case "start" -> send(chatId, mainMenuText(), mainMenu(telegramId));
             case "burger", "eat", "поесть" -> {
                 FoodActionResult result = gameService.playFood(profile.telegramId());
-                send(chatId, renderFoodActionText(profile, result), null);
+                sendHtml(chatId, renderFoodActionText(profile, result), null);
             }
             case "dick", "pipisa", "piska" -> {
                 PipisaActionResult result = gameService.playPipisa(profile.telegramId());
-                send(chatId, renderPipisaActionText(profile, result), null);
+                sendHtml(chatId, renderPipisaActionText(profile, result), null);
             }
             default -> {
                 // In groups bot ignores all other commands.
@@ -267,7 +267,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
             UserProfile user = gameService.findUser(telegramId).orElseThrow();
             if (isGroupChat(callback.getMessage())) {
                 FoodActionResult result = gameService.playFood(user.telegramId());
-                send(chatId, renderFoodActionText(user, result), null);
+                sendHtml(chatId, renderFoodActionText(user, result), null);
             } else {
                 processFoodAction(user, chatId, messageId);
             }
@@ -309,21 +309,31 @@ public class GameTelegramBot extends TelegramLongPollingBot {
             if (isGroupChat(callback.getMessage())) {
                 UserProfile user = gameService.findUser(telegramId).orElseThrow();
                 PipisaActionResult result = gameService.playPipisa(telegramId);
-                send(chatId, renderPipisaActionText(user, result), null);
+                sendHtml(chatId, renderPipisaActionText(user, result), null);
             } else {
                 processPipisaAction(telegramId, chatId, messageId);
             }
             return;
         }
         if (CallbackData.FOOD_CHALLENGES.equals(data)) {
-            edit(chatId, messageId, gameService.renderChallengeList(telegramId), challengesMenu(telegramId));
+            edit(chatId, messageId, gameService.renderChallengeList(telegramId, "FOOD"), challengesMenu(telegramId, "FOOD"));
+            return;
+        }
+        if (CallbackData.PIPISA_CHALLENGES.equals(data)) {
+            edit(chatId, messageId, gameService.renderChallengeList(telegramId, "PIPISA"), challengesMenu(telegramId, "PIPISA"));
             return;
         }
         if (data.startsWith("challenge:accept:")) {
-            long challengeId = Long.parseLong(data.substring("challenge:accept:".length()));
+            String payload = data.substring("challenge:accept:".length());
+            String[] parts = payload.split(":", 2);
+            if (parts.length < 2) {
+                return;
+            }
+            String mode = parts[0];
+            long challengeId = Long.parseLong(parts[1]);
             boolean accepted = gameService.acceptChallenge(telegramId, challengeId);
             String text = accepted ? "✅ Челлендж принят. Время пошло!" : "ℹ️ Челлендж уже принят или недоступен.";
-            edit(chatId, messageId, text + "\n\n" + gameService.renderChallengeList(telegramId), challengesMenu(telegramId));
+            edit(chatId, messageId, text + "\n\n" + gameService.renderChallengeList(telegramId, mode), challengesMenu(telegramId, mode));
             return;
         }
         if (CallbackData.ADMIN_MENU.equals(data) && isAdmin(telegramId)) {
@@ -471,9 +481,9 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         String text = renderFoodActionText(user, result);
 
         if (messageId == null) {
-            send(chatId, text, foodMenu());
+            sendHtml(chatId, text, foodMenu());
         } else {
-            edit(chatId, messageId, text, foodMenu());
+            editHtml(chatId, messageId, text, foodMenu());
         }
     }
 
@@ -481,11 +491,11 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         UserProfile user = gameService.findUser(telegramId).orElseThrow();
         PipisaActionResult result = gameService.playPipisa(telegramId);
         String text = renderPipisaActionText(user, result);
-        edit(chatId, messageId, text, pipisaMenu());
+        editHtml(chatId, messageId, text, pipisaMenu());
     }
 
     private String renderFoodActionText(UserProfile user, FoodActionResult result) {
-        String name = gameService.displayName(user.firstName(), user.username());
+        String name = mentionUser(user);
         int rank = gameService.getFoodAllTimeRank(user.telegramId());
         if (result.alreadyPlayedToday()) {
             return name + ", ты уже ел сегодня.\n" +
@@ -518,7 +528,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
     }
 
     private String renderPipisaActionText(UserProfile user, PipisaActionResult result) {
-        String name = gameService.displayName(user.firstName(), user.username());
+        String name = mentionUser(user);
         int rank = gameService.getPipisaAllTimeRank(user.telegramId());
         if (result.alreadyPlayedToday()) {
             return name + ", ты уже измерял писюн сегодня.\n" +
@@ -537,7 +547,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         return actionLine + "\n" +
                 "Теперь он равен " + result.total() + " см.\n" +
                 "Ты занимаешь " + rank + " место в топе.\n" +
-                "Следующая попытка завтра!";
+                "Следующая попытка завтра!" + result.extraText();
     }
 
     private String extractBotCommand(String text) {
@@ -610,7 +620,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
     private InlineKeyboardMarkup pipisaMenu() {
         return kb(List.of(
                 List.of(btn("📏 Измерить сегодня", CallbackData.PIPISA_MEASURE)),
-                List.of(btn("🥇 Рейтинг", CallbackData.PIPISA_RATING)),
+                List.of(btn("🥇 Рейтинг", CallbackData.PIPISA_RATING), btn("🔥 Челленджи", CallbackData.PIPISA_CHALLENGES)),
                 List.of(btn("⬅️ Назад", CallbackData.MENU_MAIN), btn("🏠 В меню", CallbackData.MENU_MAIN))
         ));
     }
@@ -631,14 +641,15 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         ));
     }
 
-    private InlineKeyboardMarkup challengesMenu(long telegramId) {
+    private InlineKeyboardMarkup challengesMenu(long telegramId, String mode) {
         List<List<InlineKeyboardButton>> rows = new ArrayList<>();
-        for (ChallengeView challenge : gameService.getChallenges(telegramId)) {
+        for (ChallengeView challenge : gameService.getChallenges(telegramId, mode)) {
             if (!challenge.accepted()) {
-                rows.add(List.of(btn("✅ Принять: " + challenge.title(), "challenge:accept:" + challenge.challengeId())));
+                rows.add(List.of(btn("✅ Принять: " + challenge.title(), "challenge:accept:" + mode + ":" + challenge.challengeId())));
             }
         }
-        rows.add(List.of(btn("⬅️ Назад", CallbackData.MENU_FOOD), btn("🏠 В меню", CallbackData.MENU_MAIN)));
+        String backTarget = "PIPISA".equals(mode) ? CallbackData.MENU_PIPISA : CallbackData.MENU_FOOD;
+        rows.add(List.of(btn("⬅️ Назад", backTarget), btn("🏠 В меню", CallbackData.MENU_MAIN)));
         return kb(rows);
     }
 
@@ -724,6 +735,18 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         }
     }
 
+    private void sendHtml(long chatId, String text, InlineKeyboardMarkup markup) {
+        SendMessage msg = new SendMessage();
+        msg.setChatId(String.valueOf(chatId));
+        msg.setText(text);
+        msg.setReplyMarkup(markup);
+        msg.setParseMode("HTML");
+        try {
+            execute(msg);
+        } catch (TelegramApiException ignored) {
+        }
+    }
+
     private void edit(long chatId, int messageId, String text, InlineKeyboardMarkup markup) {
         EditMessageText msg = new EditMessageText();
         msg.setChatId(String.valueOf(chatId));
@@ -737,6 +760,20 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         }
     }
 
+    private void editHtml(long chatId, int messageId, String text, InlineKeyboardMarkup markup) {
+        EditMessageText msg = new EditMessageText();
+        msg.setChatId(String.valueOf(chatId));
+        msg.setMessageId(messageId);
+        msg.setText(text);
+        msg.setReplyMarkup(markup);
+        msg.setParseMode("HTML");
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            sendHtml(chatId, text, markup);
+        }
+    }
+
     private void answer(String callbackId, String text) throws TelegramApiException {
         AnswerCallbackQuery ans = new AnswerCallbackQuery();
         ans.setCallbackQueryId(callbackId);
@@ -746,6 +783,22 @@ public class GameTelegramBot extends TelegramLongPollingBot {
 
     private boolean isAdmin(long telegramId) {
         return adminIds.contains(telegramId);
+    }
+
+    private String mentionUser(UserProfile user) {
+        String safeText = escapeHtml(gameService.displayName(user.firstName(), user.username()));
+        return "<a href=\"tg://user?id=" + user.telegramId() + "\">" + safeText + "</a>";
+    }
+
+    private String escapeHtml(String input) {
+        if (input == null) {
+            return "";
+        }
+        return input
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
     }
 
     private void deleteMessage(long chatId, int messageId) {

@@ -72,12 +72,15 @@ public class GameService {
         LocalDate today = LocalDate.now();
 
         if (today.toString().equals(user.lastPipisaPlayDate())) {
-            return new PipisaActionResult(true, user.pipisaLastDelta(), user.pipisaTotal());
+            return new PipisaActionResult(true, user.pipisaLastDelta(), user.pipisaTotal(), "");
         }
 
         int delta = generatePipisaDelta();
-        UserProfile updated = db.applyPipisaAction(telegramId, delta, today);
-        return new PipisaActionResult(false, delta, updated.pipisaTotal());
+        db.applyPipisaAction(telegramId, delta, today);
+        List<String> challengeUpdates = db.updateChallengesOnPipisaGain(telegramId, Math.max(delta, 0));
+        UserProfile updated = db.findUserByTelegramId(telegramId).orElseThrow();
+        String extra = challengeUpdates.isEmpty() ? "" : "\n\n" + String.join("\n", challengeUpdates);
+        return new PipisaActionResult(false, delta, updated.pipisaTotal(), extra);
     }
 
     public String buildFoodScreen(UserProfile user) {
@@ -95,9 +98,13 @@ public class GameService {
     }
 
     public String buildFoodLeaderboard(long telegramId, LeaderboardPeriod period) {
-        List<LeaderboardEntry> top = db.getTopFood(period, 10);
+        List<LeaderboardEntry> top = (period == LeaderboardPeriod.DAY)
+                ? db.getTopFoodDayPlayedOnly(10)
+                : db.getTopFood(period, 10);
         Optional<UserProfile> me = db.findUserByTelegramId(telegramId);
-        int myRank = db.getFoodRank(telegramId, period);
+        int myRank = (period == LeaderboardPeriod.DAY)
+                ? db.getFoodDayPlayedRank(telegramId)
+                : db.getFoodRank(telegramId, period);
 
         StringBuilder sb = new StringBuilder("🏆 ТОП-10 Еда-метр (" + periodLabel(period) + ")\n");
         if (top.isEmpty()) {
@@ -112,6 +119,10 @@ public class GameService {
         }
 
         if (me.isPresent()) {
+            if (period == LeaderboardPeriod.DAY && myRank == 0) {
+                sb.append("\nСегодня ты ещё не ел.");
+                return sb.toString();
+            }
             double myValue = db.getFoodScore(telegramId, period);
             sb.append("\n").append(myRank).append(". Ты — ").append(FormatUtil.kg(myValue)).append(" кг");
         }
@@ -150,8 +161,8 @@ public class GameService {
         return sb.toString();
     }
 
-    public List<ChallengeView> getChallenges(long telegramId) {
-        return db.getChallengesForUser(telegramId);
+    public List<ChallengeView> getChallenges(long telegramId, String mode) {
+        return db.getChallengesForUser(telegramId, mode);
     }
 
     public boolean acceptChallenge(long telegramId, long challengeId) {
@@ -231,8 +242,8 @@ public class GameService {
         return db.getPipisaRank(telegramId, LeaderboardPeriod.ALL);
     }
 
-    public String renderChallengeList(long telegramId) {
-        List<ChallengeView> challenges = getChallenges(telegramId);
+    public String renderChallengeList(long telegramId, String mode) {
+        List<ChallengeView> challenges = getChallenges(telegramId, mode);
         if (challenges.isEmpty()) {
             return "🎯 Сейчас нет активных челленджей. Загляни позже.";
         }
@@ -262,7 +273,8 @@ public class GameService {
                     status;
             blocks.add(text);
         }
-        return "🎯 Активные челленджи\n\n" + String.join("\n\n", blocks);
+        String modeTitle = "PIPISA".equals(mode) ? "🎯 Пошлые челленджи" : "🎯 Активные челленджи";
+        return modeTitle + "\n\n" + String.join("\n\n", blocks);
     }
 
     public String renderKeywordList() {

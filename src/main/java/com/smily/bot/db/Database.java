@@ -48,6 +48,7 @@ public class Database {
                     CREATE TABLE IF NOT EXISTS challenges (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         code TEXT NOT NULL UNIQUE,
+                        mode TEXT NOT NULL DEFAULT 'FOOD',
                         title TEXT NOT NULL,
                         description TEXT NOT NULL,
                         goal_kg REAL NOT NULL,
@@ -100,24 +101,44 @@ public class Database {
         } catch (SQLException e) {
             throw new RuntimeException("Failed to init DB", e);
         }
+        migrateSchema();
         seedChallenges();
     }
 
-    private void seedChallenges() {
-        upsertChallenge("WEEK_BULK", "🔥 Набор недели", "Набери 20,0 кг за 7 дней.", 20.0, 7,
-                "BONUS_KG", 5.0, 0, true);
-        upsertChallenge("IRON_STOMACH", "⚙️ Железный желудок", "Набери 40,0 кг за 10 дней.", 40.0, 10,
-                "MULTIPLIER", 1.5, 3, true);
-        upsertChallenge("SPEED_BITE", "⚡ Быстрый перекус", "Набери 12,0 кг за 3 дня.", 12.0, 3,
-                "BONUS_KG", 3.0, 0, true);
+    private void migrateSchema() {
+        try (Connection conn = getConnection(); Statement st = conn.createStatement()) {
+            try {
+                st.execute("ALTER TABLE challenges ADD COLUMN mode TEXT NOT NULL DEFAULT 'FOOD'");
+            } catch (SQLException ignored) {
+                // Column already exists.
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to migrate schema", e);
+        }
     }
 
-    private void upsertChallenge(String code, String title, String description, double goal, int days,
+    private void seedChallenges() {
+        upsertChallenge("WEEK_BULK", "FOOD", "🔥 Набор недели", "Набери 20,0 кг за 7 дней.", 20.0, 7,
+                "BONUS_KG", 5.0, 0, true);
+        upsertChallenge("IRON_STOMACH", "FOOD", "⚙️ Железный желудок", "Набери 40,0 кг за 10 дней.", 40.0, 10,
+                "MULTIPLIER", 1.5, 3, true);
+        upsertChallenge("SPEED_BITE", "FOOD", "⚡ Быстрый перекус", "Набери 12,0 кг за 3 дня.", 12.0, 3,
+                "BONUS_KG", 3.0, 0, true);
+        upsertChallenge("NIGHT_GROW", "PIPISA", "🌙 Ночной богатырь", "Добавь 25 см за 7 дней.", 25.0, 7,
+                "BONUS_CM", 4.0, 0, true);
+        upsertChallenge("POCKET_ROCKET", "PIPISA", "🚀 Карманная ракета", "Добавь 40 см за 10 дней.", 40.0, 10,
+                "BONUS_CM", 7.0, 0, true);
+        upsertChallenge("STEEL_PANTS", "PIPISA", "🩲 Стальные трусы", "Добавь 15 см за 3 дня.", 15.0, 3,
+                "BONUS_CM", 3.0, 0, true);
+    }
+
+    private void upsertChallenge(String code, String mode, String title, String description, double goal, int days,
                                  String rewardType, double rewardValue, int rewardDays, boolean active) {
         String sql = """
-                INSERT INTO challenges (code, title, description, goal_kg, duration_days, reward_type, reward_value, reward_days, active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO challenges (code, mode, title, description, goal_kg, duration_days, reward_type, reward_value, reward_days, active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(code) DO UPDATE SET
+                    mode=excluded.mode,
                     title=excluded.title,
                     description=excluded.description,
                     goal_kg=excluded.goal_kg,
@@ -129,14 +150,15 @@ public class Database {
                 """;
         try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, code);
-            ps.setString(2, title);
-            ps.setString(3, description);
-            ps.setDouble(4, goal);
-            ps.setInt(5, days);
-            ps.setString(6, rewardType);
-            ps.setDouble(7, rewardValue);
-            ps.setInt(8, rewardDays);
-            ps.setInt(9, active ? 1 : 0);
+            ps.setString(2, mode);
+            ps.setString(3, title);
+            ps.setString(4, description);
+            ps.setDouble(5, goal);
+            ps.setInt(6, days);
+            ps.setString(7, rewardType);
+            ps.setDouble(8, rewardValue);
+            ps.setInt(9, rewardDays);
+            ps.setInt(10, active ? 1 : 0);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException(e);
@@ -324,6 +346,42 @@ public class Database {
         return getTopByPeriod("FOOD", period, limit, "food_total");
     }
 
+    public List<LeaderboardEntry> getTopFoodDayPlayedOnly(int limit) {
+        String today = LocalDate.now().toString();
+        String sql = """
+                SELECT u.telegram_id, u.first_name, u.username, s.value
+                FROM (
+                    SELECT se.user_id, SUM(se.delta) AS value
+                    FROM score_events se
+                    WHERE se.mode = 'FOOD' AND se.event_date = ?
+                    GROUP BY se.user_id
+                ) s
+                JOIN users u ON u.id = s.user_id
+                ORDER BY s.value DESC, u.id ASC
+                LIMIT ?
+                """;
+        List<LeaderboardEntry> list = new ArrayList<>();
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, today);
+            ps.setInt(2, limit);
+            try (ResultSet rs = ps.executeQuery()) {
+                int rank = 1;
+                while (rs.next()) {
+                    list.add(new LeaderboardEntry(
+                            rank++,
+                            rs.getLong("telegram_id"),
+                            rs.getString("first_name"),
+                            rs.getString("username"),
+                            rs.getDouble("value")
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+        return list;
+    }
+
     public List<LeaderboardEntry> getTopPipisa(LeaderboardPeriod period, int limit) {
         return getTopByPeriod("PIPISA", period, limit, "pipisa_total");
     }
@@ -366,6 +424,35 @@ public class Database {
 
     public int getFoodRank(long telegramId, LeaderboardPeriod period) {
         return getRankByPeriod(telegramId, "FOOD", period, "food_total");
+    }
+
+    public int getFoodDayPlayedRank(long telegramId) {
+        String today = LocalDate.now().toString();
+        String sql = """
+                WITH scores AS (
+                    SELECT se.user_id, SUM(se.delta) AS value
+                    FROM score_events se
+                    WHERE se.mode = 'FOOD' AND se.event_date = ?
+                    GROUP BY se.user_id
+                )
+                SELECT 1 + (
+                    SELECT COUNT(*)
+                    FROM scores s2
+                    WHERE s2.value > s1.value
+                ) AS rank
+                FROM scores s1
+                JOIN users me ON me.id = s1.user_id
+                WHERE me.telegram_id = ?
+                """;
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, today);
+            ps.setLong(2, telegramId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt("rank") : 0;
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public int getPipisaRank(long telegramId, LeaderboardPeriod period) {
@@ -558,7 +645,7 @@ public class Database {
         throw new IllegalArgumentException("Period key is not supported for: " + period);
     }
 
-    public List<ChallengeView> getChallengesForUser(long telegramId) {
+    public List<ChallengeView> getChallengesForUser(long telegramId, String mode) {
         String sql = """
                 SELECT c.id,
                        c.code,
@@ -577,12 +664,13 @@ public class Database {
                 FROM challenges c
                 LEFT JOIN users u ON u.telegram_id = ?
                 LEFT JOIN user_challenges uc ON uc.challenge_id = c.id AND uc.user_id = u.id
-                WHERE c.active = 1
+                WHERE c.active = 1 AND c.mode = ?
                 ORDER BY c.id
                 """;
         List<ChallengeView> list = new ArrayList<>();
         try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, telegramId);
+            ps.setString(2, mode);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     list.add(new ChallengeView(
@@ -678,7 +766,7 @@ public class Database {
                         SELECT uc.id, uc.progress, c.goal_kg, c.title, c.reward_type, c.reward_value, c.reward_days
                         FROM user_challenges uc
                         JOIN challenges c ON c.id = uc.challenge_id
-                        WHERE uc.user_id = ? AND uc.status = 'ACTIVE' AND uc.expires_at >= ?
+                        WHERE uc.user_id = ? AND uc.status = 'ACTIVE' AND uc.expires_at >= ? AND c.mode = 'FOOD'
                         """;
                 try (PreparedStatement ps = conn.prepareStatement(select)) {
                     ps.setLong(1, userId);
@@ -732,6 +820,91 @@ public class Database {
                     }
                 }
 
+                conn.commit();
+            } catch (Exception ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        return messages;
+    }
+
+    public List<String> updateChallengesOnPipisaGain(long telegramId, int gain) {
+        if (gain <= 0) {
+            return List.of();
+        }
+        Optional<UserProfile> userOpt = findUserByTelegramId(telegramId);
+        if (userOpt.isEmpty()) {
+            return List.of();
+        }
+        long userId = userOpt.get().id();
+
+        List<String> messages = new ArrayList<>();
+        String now = now();
+        try (Connection conn = getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                String failExpired = "UPDATE user_challenges SET status='FAILED' WHERE user_id=? AND status='ACTIVE' AND expires_at < ?";
+                try (PreparedStatement ps = conn.prepareStatement(failExpired)) {
+                    ps.setLong(1, userId);
+                    ps.setString(2, now);
+                    ps.executeUpdate();
+                }
+
+                String select = """
+                        SELECT uc.id, uc.progress, c.goal_kg, c.title, c.reward_type, c.reward_value
+                        FROM user_challenges uc
+                        JOIN challenges c ON c.id = uc.challenge_id
+                        WHERE uc.user_id = ? AND uc.status = 'ACTIVE' AND uc.expires_at >= ? AND c.mode = 'PIPISA'
+                        """;
+                try (PreparedStatement ps = conn.prepareStatement(select)) {
+                    ps.setLong(1, userId);
+                    ps.setString(2, now);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            long ucId = rs.getLong("id");
+                            double newProgress = rs.getDouble("progress") + gain;
+                            double goal = rs.getDouble("goal_kg");
+                            String title = rs.getString("title");
+                            String rewardType = rs.getString("reward_type");
+                            double rewardValue = rs.getDouble("reward_value");
+
+                            if (newProgress >= goal) {
+                                String complete = "UPDATE user_challenges SET progress=?, status='COMPLETED', completed_at=?, reward_expires_at=? WHERE id=?";
+                                try (PreparedStatement cps = conn.prepareStatement(complete)) {
+                                    cps.setDouble(1, newProgress);
+                                    cps.setString(2, now);
+                                    cps.setNull(3, Types.VARCHAR);
+                                    cps.setLong(4, ucId);
+                                    cps.executeUpdate();
+                                }
+
+                                if ("BONUS_CM".equals(rewardType)) {
+                                    String addBonus = "UPDATE users SET pipisa_total = pipisa_total + ?, updated_at=? WHERE id=?";
+                                    try (PreparedStatement bps = conn.prepareStatement(addBonus)) {
+                                        bps.setInt(1, (int) Math.round(rewardValue));
+                                        bps.setString(2, now);
+                                        bps.setLong(3, userId);
+                                        bps.executeUpdate();
+                                    }
+                                    insertScoreEventByUserId(conn, userId, "PIPISA", rewardValue, LocalDate.now(), now);
+                                    messages.add("✅ Челлендж «" + title + "» выполнен! Бонус: +" + (int) Math.round(rewardValue) + " см.");
+                                }
+                            } else {
+                                String update = "UPDATE user_challenges SET progress=? WHERE id=?";
+                                try (PreparedStatement ups = conn.prepareStatement(update)) {
+                                    ups.setDouble(1, newProgress);
+                                    ups.setLong(2, ucId);
+                                    ups.executeUpdate();
+                                }
+                            }
+                        }
+                    }
+                }
                 conn.commit();
             } catch (Exception ex) {
                 conn.rollback();
