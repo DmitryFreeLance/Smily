@@ -328,6 +328,42 @@ public class Database {
         return getTopByPeriod("PIPISA", period, limit, "pipisa_total");
     }
 
+    public List<LeaderboardEntry> getTopPipisaDayPlayedOnly(int limit) {
+        String today = LocalDate.now().toString();
+        String sql = """
+                SELECT u.telegram_id, u.first_name, u.username, s.value
+                FROM (
+                    SELECT se.user_id, SUM(se.delta) AS value
+                    FROM score_events se
+                    WHERE se.mode = 'PIPISA' AND se.event_date = ?
+                    GROUP BY se.user_id
+                ) s
+                JOIN users u ON u.id = s.user_id
+                ORDER BY s.value DESC, u.id ASC
+                LIMIT ?
+                """;
+        List<LeaderboardEntry> list = new ArrayList<>();
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, today);
+            ps.setInt(2, limit);
+            try (ResultSet rs = ps.executeQuery()) {
+                int rank = 1;
+                while (rs.next()) {
+                    list.add(new LeaderboardEntry(
+                            rank++,
+                            rs.getLong("telegram_id"),
+                            rs.getString("first_name"),
+                            rs.getString("username"),
+                            rs.getDouble("value")
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+        return list;
+    }
+
     public int getFoodRank(long telegramId, LeaderboardPeriod period) {
         return getRankByPeriod(telegramId, "FOOD", period, "food_total");
     }
@@ -336,12 +372,62 @@ public class Database {
         return getRankByPeriod(telegramId, "PIPISA", period, "pipisa_total");
     }
 
+    public int getPipisaDayPlayedRank(long telegramId) {
+        String today = LocalDate.now().toString();
+        String sql = """
+                WITH scores AS (
+                    SELECT se.user_id, SUM(se.delta) AS value
+                    FROM score_events se
+                    WHERE se.mode = 'PIPISA' AND se.event_date = ?
+                    GROUP BY se.user_id
+                )
+                SELECT 1 + (
+                    SELECT COUNT(*)
+                    FROM scores s2
+                    WHERE s2.value > s1.value
+                ) AS rank
+                FROM scores s1
+                JOIN users me ON me.id = s1.user_id
+                WHERE me.telegram_id = ?
+                """;
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, today);
+            ps.setLong(2, telegramId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt("rank") : 0;
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     public double getFoodScore(long telegramId, LeaderboardPeriod period) {
         return getScoreByPeriod(telegramId, "FOOD", period, "food_total");
     }
 
     public double getPipisaScore(long telegramId, LeaderboardPeriod period) {
         return getScoreByPeriod(telegramId, "PIPISA", period, "pipisa_total");
+    }
+
+    public boolean hasPlayedToday(long telegramId, String mode) {
+        String today = LocalDate.now().toString();
+        String sql = """
+                SELECT 1
+                FROM score_events se
+                JOIN users u ON u.id = se.user_id
+                WHERE u.telegram_id = ? AND se.mode = ? AND se.event_date = ?
+                LIMIT 1
+                """;
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, telegramId);
+            ps.setString(2, mode);
+            ps.setString(3, today);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private List<LeaderboardEntry> getTopByPeriod(String mode, LeaderboardPeriod period, int limit, String allTimeField) {

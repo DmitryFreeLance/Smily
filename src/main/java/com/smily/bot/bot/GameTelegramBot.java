@@ -127,7 +127,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         }
         if ("/dick".equalsIgnoreCase(text) || "/pipisa".equalsIgnoreCase(text)) {
             PipisaActionResult result = gameService.playPipisa(profile.telegramId());
-            send(chatId, renderPipisaActionText(result), pipisaMenu());
+            send(chatId, renderPipisaActionText(profile, result), pipisaMenu());
             return;
         }
 
@@ -164,11 +164,11 @@ public class GameTelegramBot extends TelegramLongPollingBot {
             case "start" -> send(chatId, mainMenuText(), mainMenu(telegramId));
             case "burger", "eat", "поесть" -> {
                 FoodActionResult result = gameService.playFood(profile.telegramId());
-                send(chatId, renderFoodActionText(result), null);
+                send(chatId, renderFoodActionText(profile, result), null);
             }
             case "dick", "pipisa", "piska" -> {
                 PipisaActionResult result = gameService.playPipisa(profile.telegramId());
-                send(chatId, renderPipisaActionText(result), null);
+                send(chatId, renderPipisaActionText(profile, result), null);
             }
             default -> {
                 // In groups bot ignores all other commands.
@@ -265,7 +265,12 @@ public class GameTelegramBot extends TelegramLongPollingBot {
         }
         if (CallbackData.FOOD_EAT.equals(data)) {
             UserProfile user = gameService.findUser(telegramId).orElseThrow();
-            processFoodAction(user, chatId, messageId);
+            if (isGroupChat(callback.getMessage())) {
+                FoodActionResult result = gameService.playFood(user.telegramId());
+                send(chatId, renderFoodActionText(user, result), null);
+            } else {
+                processFoodAction(user, chatId, messageId);
+            }
             return;
         }
         if (CallbackData.FOOD_RATING.equals(data)) {
@@ -301,7 +306,13 @@ public class GameTelegramBot extends TelegramLongPollingBot {
             return;
         }
         if (CallbackData.PIPISA_MEASURE.equals(data)) {
-            processPipisaAction(telegramId, chatId, messageId);
+            if (isGroupChat(callback.getMessage())) {
+                UserProfile user = gameService.findUser(telegramId).orElseThrow();
+                PipisaActionResult result = gameService.playPipisa(telegramId);
+                send(chatId, renderPipisaActionText(user, result), null);
+            } else {
+                processPipisaAction(telegramId, chatId, messageId);
+            }
             return;
         }
         if (CallbackData.FOOD_CHALLENGES.equals(data)) {
@@ -457,7 +468,7 @@ public class GameTelegramBot extends TelegramLongPollingBot {
 
     private void processFoodAction(UserProfile user, long chatId, Integer messageId) {
         FoodActionResult result = gameService.playFood(user.telegramId());
-        String text = renderFoodActionText(result);
+        String text = renderFoodActionText(user, result);
 
         if (messageId == null) {
             send(chatId, text, foodMenu());
@@ -467,35 +478,66 @@ public class GameTelegramBot extends TelegramLongPollingBot {
     }
 
     private void processPipisaAction(long telegramId, long chatId, int messageId) {
+        UserProfile user = gameService.findUser(telegramId).orElseThrow();
         PipisaActionResult result = gameService.playPipisa(telegramId);
-        String text = renderPipisaActionText(result);
+        String text = renderPipisaActionText(user, result);
         edit(chatId, messageId, text, pipisaMenu());
     }
 
-    private String renderFoodActionText(FoodActionResult result) {
+    private String renderFoodActionText(UserProfile user, FoodActionResult result) {
+        String name = gameService.displayName(user.firstName(), user.username());
+        int rank = gameService.getFoodAllTimeRank(user.telegramId());
         if (result.alreadyPlayedToday()) {
-            return "⏳ Сегодня лимит уже использован. Новая попытка будет завтра.\n" +
-                    "Последний результат: " + FormatUtil.kg(result.delta()) + " кг.\n" +
-                    "Всего: " + FormatUtil.kg(result.total()) + " кг.";
+            return name + ", ты уже ел(а) сегодня.\n" +
+                    "Сейчас у тебя " + FormatUtil.kg(result.total()) + " кг.\n" +
+                    "Ты занимаешь " + rank + " место в топе.\n" +
+                    "Следующая попытка завтра!";
         }
-        if (result.success()) {
-            return "🍔 Ты съел(а) " + FormatUtil.kg(result.delta()) + " кг.\n" +
-                    "Всего теперь: " + FormatUtil.kg(result.total()) + " кг." + result.extraText();
+        StringBuilder sb = new StringBuilder();
+        if (result.delta() > 0) {
+            sb.append(name)
+                    .append(", ты съел(а) ")
+                    .append(FormatUtil.kg(result.delta()))
+                    .append(" кг вкуснятины 🍔");
+        } else if (result.delta() < 0) {
+            sb.append(name)
+                    .append(", ох, часть запаса ушла в минус: -")
+                    .append(FormatUtil.kg(Math.abs(result.delta())))
+                    .append(" кг 🥗");
+        } else {
+            sb.append(name)
+                    .append(", сегодня ровно по нулям: бургер-счетчик не изменился 😌");
         }
-        return "🥗 Сегодня не зашло: ты похудел(а) на " + FormatUtil.kg(Math.abs(result.delta())) + " кг.\n" +
-                "Итого: " + FormatUtil.kg(result.total()) + " кг." + result.extraText();
+        sb.append("\nТеперь съедено всего ").append(FormatUtil.kg(result.total())).append(" кг.");
+        sb.append("\nТы занимаешь ").append(rank).append(" место в топе.");
+        sb.append("\nСледующая попытка завтра!");
+        if (!result.extraText().isBlank()) {
+            sb.append(result.extraText());
+        }
+        return sb.toString();
     }
 
-    private String renderPipisaActionText(PipisaActionResult result) {
+    private String renderPipisaActionText(UserProfile user, PipisaActionResult result) {
+        String name = gameService.displayName(user.firstName(), user.username());
+        int rank = gameService.getPipisaAllTimeRank(user.telegramId());
         if (result.alreadyPlayedToday()) {
-            return "⏳ Ты уже играл(а) сегодня.\nТекущий размер: " + result.total() + " см.\nСледующая попытка завтра.";
+            return name + ", ты уже измерял(а) писюн сегодня.\n" +
+                    "Сейчас он равен " + result.total() + " см.\n" +
+                    "Ты занимаешь " + rank + " место в топе.\n" +
+                    "Следующая попытка завтра!";
         }
-        String action = result.delta() > 0
-                ? "вырос на " + result.delta() + " см"
-                : (result.delta() < 0 ? "уменьшился на " + Math.abs(result.delta()) + " см" : "не изменился");
-        return "📏 Результат дня: " + action + ".\n" +
-                "Теперь показатель: " + result.total() + " см.\n" +
-                "Рейтинг обновлён, проверь место в таблице.";
+        String actionLine;
+        if (result.delta() > 0) {
+            actionLine = name + ", твой писюн вырос на " + result.delta() + " см.";
+        } else if (result.delta() < 0) {
+            actionLine = name + ", сегодня прохладно: писюн укоротился на " + Math.abs(result.delta()) + " см.";
+        } else {
+            actionLine = name + ", сегодня без изменений: писюн остался при своих 😌";
+        }
+        return actionLine + "\n" +
+                "Теперь он равен " + result.total() + " см.\n" +
+                "Ты занимаешь " + rank + " место в топе.\n" +
+                "Следующая попытка завтра!";
     }
 
     private String extractBotCommand(String text) {
@@ -518,7 +560,12 @@ public class GameTelegramBot extends TelegramLongPollingBot {
             }
             command = command.substring(0, at);
         }
-        return command.toLowerCase();
+        String normalized = command.toLowerCase();
+        String uname = username.toLowerCase();
+        if (!normalized.contains("@") && normalized.endsWith(uname) && normalized.length() > uname.length()) {
+            normalized = normalized.substring(0, normalized.length() - uname.length());
+        }
+        return normalized;
     }
 
     private String mainMenuText() {
@@ -731,6 +778,13 @@ public class GameTelegramBot extends TelegramLongPollingBot {
             return false;
         }
         return message.isUserMessage();
+    }
+
+    private boolean isGroupChat(MaybeInaccessibleMessage message) {
+        if (message == null) {
+            return false;
+        }
+        return message.isGroupMessage() || message.isSuperGroupMessage();
     }
 
     private boolean isPrivateUpdate(Update update) {

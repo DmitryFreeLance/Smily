@@ -40,15 +40,17 @@ public class GameService {
         }
 
         double multiplier = db.getActiveMultiplier(user.id());
-        boolean fail = random.nextDouble() < 0.18;
+        double roll = random.nextDouble();
         double delta;
 
-        if (fail) {
-            double loss = randomStep(0.2, 1.5, 0.1);
-            delta = -Math.min(loss, user.foodTotal());
-        } else {
+        if (roll < 0.70) {
             double base = randomStep(0.5, 5.0, 0.1);
             delta = roundOne(base * multiplier);
+        } else if (roll < 0.75) {
+            delta = 0.0;
+        } else {
+            double loss = randomStep(0.5, 3.0, 0.1);
+            delta = -Math.min(loss, user.foodTotal());
         }
 
         UserProfile updated = db.applyFoodAction(telegramId, delta, today);
@@ -62,7 +64,7 @@ public class GameService {
         if (!challengeUpdates.isEmpty()) {
             extra.append("\n\n").append(String.join("\n", challengeUpdates));
         }
-        return new FoodActionResult(!fail, false, delta, updated.foodTotal(), extra.toString());
+        return new FoodActionResult(delta > 0, false, delta, updated.foodTotal(), extra.toString());
     }
 
     public PipisaActionResult playPipisa(long telegramId) {
@@ -117,9 +119,13 @@ public class GameService {
     }
 
     public String buildPipisaLeaderboard(long telegramId, LeaderboardPeriod period) {
-        List<LeaderboardEntry> top = db.getTopPipisa(period, 10);
+        List<LeaderboardEntry> top = (period == LeaderboardPeriod.DAY)
+                ? db.getTopPipisaDayPlayedOnly(10)
+                : db.getTopPipisa(period, 10);
         Optional<UserProfile> me = db.findUserByTelegramId(telegramId);
-        int myRank = db.getPipisaRank(telegramId, period);
+        int myRank = (period == LeaderboardPeriod.DAY)
+                ? db.getPipisaDayPlayedRank(telegramId)
+                : db.getPipisaRank(telegramId, period);
 
         StringBuilder sb = new StringBuilder("🥇 ТОП-10 Писька-метр (" + periodLabel(period) + ")\n");
         if (top.isEmpty()) {
@@ -134,6 +140,10 @@ public class GameService {
         }
 
         if (me.isPresent()) {
+            if (period == LeaderboardPeriod.DAY && myRank == 0) {
+                sb.append("\nСегодня ты ещё не играл(а).");
+                return sb.toString();
+            }
             int myValue = (int) Math.round(db.getPipisaScore(telegramId, period));
             sb.append("\n").append(myRank).append(". Ты — ").append(myValue).append(" см");
         }
@@ -213,6 +223,14 @@ public class GameService {
         return db.resetDailyLimitsForUser(telegramId);
     }
 
+    public int getFoodAllTimeRank(long telegramId) {
+        return db.getFoodRank(telegramId, LeaderboardPeriod.ALL);
+    }
+
+    public int getPipisaAllTimeRank(long telegramId) {
+        return db.getPipisaRank(telegramId, LeaderboardPeriod.ALL);
+    }
+
     public String renderChallengeList(long telegramId) {
         List<ChallengeView> challenges = getChallenges(telegramId);
         if (challenges.isEmpty()) {
@@ -261,13 +279,13 @@ public class GameService {
 
     private int generatePipisaDelta() {
         double roll = random.nextDouble();
-        if (roll < 0.7) {
-            return random.nextInt(12) + 1;
+        if (roll < 0.70) {
+            return random.nextInt(15) + 1;
         }
-        if (roll < 0.9) {
+        if (roll < 0.75) {
             return 0;
         }
-        return -(random.nextInt(4) + 1);
+        return -(random.nextInt(10) + 1);
     }
 
     private double randomStep(double min, double max, double step) {
